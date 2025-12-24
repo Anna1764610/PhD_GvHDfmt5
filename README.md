@@ -1,6 +1,7 @@
 # GvHDstudy
 
-Analysis scripts for 16S microbiome data from GvHDfmt study.
+Analysis scripts for 16S microbiome data of GvHDfmt5 study.
+GvHDfmt5 study is part of the overall GVHDfmt project and consists of 3 transplant runs of different cohorts of mice: GvHDfmt5a, GvHDfmt5b and GvHDfmt5c
 
 ## Structure
 - Scripts/: R analysis scripts
