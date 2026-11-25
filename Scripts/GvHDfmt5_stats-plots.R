@@ -1,5 +1,5 @@
 ### Description: Statistics and Graphing 16S dataset      ###
-### Author: Anna Li, date: 17092025 - 27042026            ###
+### Author: Anna Li, date: 17092025 - 27082026            ###
 ### Email: anna.li@adelaide.edu.au                        ###
 
 ## Load Libraries
@@ -10,6 +10,7 @@ library(ggplot2)          # Required for graphing
 library(ggpubr)           # Required for stat_compare_means when graphing shannon
 library(gridExtra)        # Required for arranging plots (grid.arrange)
 library(dplyr)
+library(tidyverse)
 library(pairwiseAdonis)
 
 ## Set up folders
@@ -36,6 +37,29 @@ unifrac_pc = pcoa(unifrac_dist)
 wunifrac_dist = phyloseq::distance(physeq_raw_tree,method="wunifrac")
 wunifrac_pc = pcoa(wunifrac_dist)
 
+#Aitchison
+ps_clr <- microbiome::transform(physeq_prop, "clr") #input is proportional
+clr_counts <- data.frame(
+  otu_table(ps_clr),
+  check.names = FALSE
+)
+aitchison_dist = dist(t(clr_counts),method = "euclidean") #The Aitchison distance is just Euclidean on CLR transformed
+
+# MDS (PCoA on Aitchison distance)
+mds <- cmdscale(aitchison_dist, k = 2, eig = TRUE)
+
+mds_points <- mds$points
+eigvals <- mds$eig
+
+# % variation explained (Aitchison should be Euclidean -> typically all +ve,
+# but we guard just in case)
+pos_eig <- eigvals[eigvals > 0]
+pct_var <- pos_eig / sum(pos_eig) * 100
+
+#define labels
+xlab_mds1 <- paste0("MDS1 (", round(pct_var[1], 1), "%)")
+ylab_mds2 <- paste0("MDS2 (", round(pct_var[2], 1), "%)")
+
 #----Create a single dataframe/table to reference for graphing----
 PC_data.df = data.frame(map_data,alpha_div,
                         "BC1" = braycurtis_pc$vectors[,1],
@@ -43,42 +67,46 @@ PC_data.df = data.frame(map_data,alpha_div,
                         "UF1" = unifrac_pc$vectors[,1],
                         "UF2" = unifrac_pc$vectors[,2],
                         "WU1" = wunifrac_pc$vectors[,1],
-                        "WU2" = wunifrac_pc$vectors[,2])
+                        "WU2" = wunifrac_pc$vectors[,2],
+                        "MDS1" = mds_points[,1],
+                        "MDS2" = mds_points[,2])
+
+#Okabe–Ito-derived palette
 group_cols <- c(
-  "AutoFMT"             = "#d95f02",   # orange
-  "Donor match FMT"     = "#1b9e77",   # green
-  "Saline"              = "#0080C0",   # blue
-  "C57/BL6 microbiome"  = "#e7298a",   # pink
-  "LPJ microbiome"      = "#66a61e"    # olive green
+  "Syn FMT"             = "#D55E00",  # vermillion
+  "Donor match FMT"     = "#009E73",  # bluish green
+  "Saline"              = "#0072B2",  # blue
+  "C57BL/6 microbiome"  = "#E69F00",  # orange 
+  "LPJ microbiome"      = "#CC79A7"   # purple-pink 
 )
 
 ## Adding a "timepoint_ordered" column for longitudinal graphs
 # Define the order of the timepoints
-timepoint_levels <- c("S0", "D0", "D15", "F7", "F14", "F21", "Cull", "Endpoint cecal")
+timepoint_levels <- c("S0", "D0", "D15", "F7", "F14", "F21", "endpoint", "cull")
 
 # Add an ordered factor column 
 PC_data.df$Timepoint_ordered <- factor(PC_data.df$Timepoint,
                                        levels = timepoint_levels,
                                        ordered = TRUE)
 
-#Define C57/BL6 and LPJ microbiome in 'timepoint_ordered'
+#Define C57BL/6 and LPJ microbiome in 'timepoint_ordered'
 PC_data.df$Timepoint_ordered <- as.character(PC_data.df$Timepoint_ordered)
-PC_data.df$Timepoint_ordered[PC_data.df$Sample_ID %in% c("25-03302")] <- "C57/BL6 microbiome"
+PC_data.df$Timepoint_ordered[PC_data.df$Sample_ID %in% c("25-03302")] <- "C57BL/6 microbiome"
 PC_data.df$Timepoint_ordered[PC_data.df$Sample_ID %in% c("25-03303")] <- "LPJ microbiome"
 PC_data.df$Timepoint_ordered <- factor(PC_data.df$Timepoint_ordered, 
-                                       levels = c("C57/BL6 microbiome","S0","D0","D15","F7","F14","F21","Cull","Endpoint cecal","LPJ microbiome"))
-#Can omit cecal here if don't  want to include in longitudinal graphs (Timepoint_ordered arguments)
+                                       levels = 
+                                         c("C57BL/6 microbiome","S0","D0","D15","F7","F14","F21","endpoint","cull","LPJ microbiome"))
 
 #=====Graphing alpha diversity====
 # Create object without FMT samples for alpha diversity plots
 Recipient_data.df <- PC_data.df[!rownames(PC_data.df)%in% c("25-03302", "25-03303"), ]
-# Remove "cecal" samples (only plotting stool samples)
+# Remove "cull" samples (only plotting stool samples)
 Recipient_data.df <- Recipient_data.df %>%
-  filter(Timepoint_ordered != "Endpoint cecal")
+  filter(Timepoint_ordered != "cull")
 
-# Create object where data is only included if Death_timepoint column = endpoint (mouse survived through to end of experiment) and remove cecal
+# Create object where data is only included if Death_timepoint column = endpoint (mouse survived through to end of experiment) and remove cull
 Recipient_data_endpoint.df <- Recipient_data.df %>%
-  filter(Death_timepoint == "endpoint", Timepoint_ordered != "Endpoint cecal")
+  filter(Death_timepoint == "endpoint", Timepoint_ordered != "cull")
 
 #Calculating mean for groups across timepoints 
 shannon_summary <- Recipient_data.df %>%
@@ -90,26 +118,105 @@ shannon_summary <- Recipient_data.df %>%
     .groups = "drop"
   )
 
+#Create matrix of timepoint comparisons - for overview of all stats comparisons, select for graphing
+timepoint_comparisons <- combn(
+  levels(Recipient_data.df$Timepoint_ordered),
+  2,
+  simplify = FALSE
+)
+
 #----Graphing shannon diversity across timepoints----
-Shannon_timeline_plot <- ggplot(Recipient_data.df, aes(x = Timepoint_ordered, y = Shannon, fill = Timepoint_ordered)) +
+Shannon_timeline_plot <- ggplot(Recipient_data.df, aes(x = Timepoint_ordered, y = Shannon)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA) +
-  geom_line(aes(group = Mouse_ID), alpha = 0.2, linewidth = 0.2) +
-  geom_point(aes(shape = Death_timepoint, colour = Group), size = 2.5, alpha = 0.9) +
+# geom_line(aes(group = Mouse_ID), alpha = 0.2, linewidth = 0.2) +
+# geom_point(aes(shape = Death_timepoint, colour = Group), size = 2, alpha = 0.9) +
+  geom_jitter(aes(shape = Death_timepoint, colour = Group), width = 0.2, size = 2, alpha = 0.7) +
+  # Mean Shannon line per group
+  geom_line(data = shannon_summary,
+            aes(x = Timepoint_ordered, y = mean_shannon, group = Group, color = Group),
+            linewidth = 1.2) +
+  geom_point(data = shannon_summary,
+             aes(x = Timepoint_ordered, y = mean_shannon, color = Group),
+             size = 3) +
+  stat_compare_means(
+    comparisons = list(
+      c("S0", "D0"),
+      c("S0", "D15"),
+      c("D0", "D15"),
+      c("D15", "F7"),
+      c("F7", "F14")
+    ),
+    method = "wilcox.test",
+    p.adjust.method = "holm",
+    label = "p.signif", #p.format for specific value
+  )+
+  scale_color_manual(values = group_cols)+
   scale_shape_manual(values = c(
     "endpoint" = 16,            # circle
     "non-endpoint" = 17,        # triangle
     "died preF7" = 15           # square
   )) +
-  theme_minimal(base_size = 14) +
+  theme_minimal() +
   labs(title = "Shannon's diversity per timepoint",
        x = "Timepoint",
        y = "Shannon Diversity Index") +
-  labs(subtitle = "All mice throughout experiment")
   theme(legend.position = "right")
 
 Shannon_timeline_plot
 
-#should refer to Feargal's code to see how to add stats across the timepoints
+#----Graphing Shannon's diversity as a raincloud----
+library(ggdist)
+library(gghalves)
+
+#Plot: raincloud_shannon
+raincloud_shannon_plot <- ggplot(Recipient_data.df, 
+                                 aes(x = Timepoint_ordered, y = Shannon)) +
+  # Half-violin (density)
+  stat_halfeye(
+    adjust = 0.7, width = 0.7, .width = 0, justification = -0.2,
+    point_interval = median_qi,
+    alpha = 0.6) +
+  # Jittered points
+  geom_point(
+    aes(shape = Death_timepoint, color = Group), 
+    position = position_jitter(width = 0.2, height = 0),
+    alpha = 0.6, size = 2.5) +
+  # Boxplot (optional; remove if you want summary dot only)
+  geom_boxplot(
+    width = 0.1, outlier.shape = NA,
+    alpha = 0.7, color = "black") +
+  # Mean Shannon line per group
+  geom_line(data = shannon_summary,
+            aes(x = Timepoint_ordered, y = mean_shannon, group = Group, color = Group),
+            linewidth = 1.2) +
+  geom_point(data = shannon_summary,
+             aes(x = Timepoint_ordered, y = mean_shannon, color = Group),
+             size = 3) +
+  stat_compare_means(
+    comparisons = list(
+      c("S0", "D0"),
+      c("S0", "D15"),
+      c("D0", "D15"),
+      c("D15", "F7"),
+      c("F7", "F14")
+    ),
+    method = "wilcox.test",
+    p.adjust.method = "holm",
+    label = "p.signif", #p.format for specific value
+  )+
+  scale_color_manual(values = group_cols)+
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 14,
+                              face = "bold",
+                              hjust = 0.5)) +
+  labs(title = "Shannon Diversity by Timepoint",
+       x = "",
+       y = "Shannon Diversity Index")
+
+raincloud_shannon_plot
 
 #----Graphing Shannon's diversity - by group at specific timepoints----
 # Generate all pairwise combinations of groups/define pairwise comparisons
@@ -119,7 +226,7 @@ comparisons <- combn(unique(Recipient_data.df$Group), 2, simplify = FALSE)
 # Subset only D15 samples
 alpha_div_D15 <- Recipient_data.df %>%
   filter(Timepoint_ordered == "D15")
-# Kruskal-Wallis test across all groups at cull
+# Kruskal-Wallis test across all groups at endpoint
 kruskal_result <- kruskal.test(Shannon ~ Group, data = alpha_div_D15)
 print(kruskal_result)
 
@@ -127,10 +234,12 @@ print(kruskal_result)
 shannon_D15_plot <- ggplot(alpha_div_D15, aes(x = Group, y = Shannon, fill = Group)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA,) +
   geom_jitter(width = 0.2, size = 2, alpha = 0.7) +
+  scale_fill_manual(values = group_cols)+
   theme_minimal(base_size = 14) +
   labs(title = "Shannon Diversity at D15 by Group",
        x = "",
        y = "Shannon Diversity Index") +
+  guides(fill = "none") +
   theme(legend.position = "none") +
   stat_compare_means(method = "kruskal.test", label.y = max(alpha_div_D15$Shannon) + 0.2) + # global test
   stat_compare_means(method = "wilcox.test", 
@@ -140,69 +249,58 @@ shannon_D15_plot
 
 #----Graphing Shannon's diversity - by group for all individual timepoints---- 
 
+#stats
+library(rstatix)
+
+wilcox_results <- Recipient_data.df %>%
+  group_by(Timepoint_ordered) %>%
+  pairwise_wilcox_test(
+    Shannon ~ Group,
+    p.adjust.method = "BH"
+  )
+
+wilcox_results
+
+wilcox_results <- wilcox_results %>%
+  add_y_position(
+    fun = "max",
+    step.increase = 0.2)
+
+#  stat_compare_means(method = "wilcox.test",
+comparisons = combn(unique(Recipient_data.df$Group), 2, simplify = FALSE),
+label = "p.signif") +
+
 Shannon_all_plot <- ggplot(Recipient_data.df, aes(x = Group, y = Shannon, fill = Group)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA) +
-  geom_jitter(#aes(color = HSCT_challenge), #to colour the points by any metadata you like
-              width = 0.2, size = 2, alpha = 0.7) +   # color by metadata input i.e. Study_ID
-  facet_wrap(~ Timepoint_ordered) +   # cycle through timepoints
-  theme_minimal(base_size = 14) +
+  scale_fill_manual(values = group_cols) +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7) +
+  stat_pvalue_manual(wilcox_results,
+                     label = "p.adj.signif",
+                     hide.ns = TRUE) +
+  facet_wrap(~ Timepoint_ordered, nrow=2) +   # cycle through timepoints
+  theme_classic2(base_size = 14) +
+  theme(
+    axis.text.x = element_text(size = 0),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    plot.title = element_text(size = 12,
+                              face = "bold",
+                              hjust = 0.5),
+    axis.line = element_line(
+      linewidth = 0.5,
+      linetype = "solid"
+    )) +
   labs(title = "Shannon's diversity across timepoints by treatment group",
        x = "",
-       y = "Shannon Diversity Index") +
-  #scale_color_manual(values = c("Mild" = "yellow", "Moderate" = "orange", "Robust" = "purple")) +   #choose the metadata names and colour
-  theme(legend.position = "none") +
-  stat_compare_means(method = "kruskal.test", 
-                     label.y.npc = "top", label.x.npc = "left") + 
-  stat_compare_means(method = "wilcox.test",
-                     comparisons = combn(unique(Recipient_data.df$Group), 2, simplify = FALSE),
-                     label = "p.signif")
-
+       y = "Shannon Diversity Index")
+#  guides(fill = "none") +
+  theme(legend.position = "inside")
 Shannon_all_plot
+
 #demonstrates that there are no statistic differences in alpha diversity at each timepoint
 
-#----Graphing Shannon's diversity as a raincloud----
-library(tidyverse)
-library(ggdist)
-library(gghalves)
-
-#Plot: raincloud_shannon
-raincloud_shannon_plot <- ggplot(Recipient_data.df, 
-                            aes(x = Timepoint_ordered, y = Shannon, fill = Timepoint_ordered)) +
-  # Half-violin (density)
-  stat_halfeye(
-    adjust = 0.7, width = 0.7, .width = 0, justification = -0.2,
-    point_interval = median_qi,
-    alpha = 0.6
-  ) +
-  # Jittered points
-  geom_point(
-    aes(color = Group), 
-    position = position_jitter(width = 0.1, height = 0),
-    alpha = 0.6, size = 2
-  ) +
-  # Boxplot (optional; remove if you want summary dot only)
-  geom_boxplot(
-   width = 0.15, outlier.shape = NA,
-   alpha = 0.7, color = "black"
-  ) +
-  # Mean Shannon line per group
-  geom_line(data = shannon_summary,
-            aes(x = Timepoint_ordered, y = mean_shannon, group = Group, color = Group),
-            linewidth = 1.2) +
-  geom_point(data = shannon_summary,
-             aes(x = Timepoint_ordered, y = mean_shannon, color = Group),
-             size = 3) +
-  theme_minimal(base_size = 14) +
-  labs(title = "Shannon Diversity by Timepoint – Raincloud Plot",
-       x = "",
-       y = "Shannon Diversity") +
-  labs(subtitle = "All mice throughout experiment") +
-  theme(legend.position = "right")
-
-raincloud_shannon_plot
-
 #====Graphing beta diversity====
-#----Bray Curtis global statistics / PERMANOVA----
+#----Bray Curtis and Aitchison global statistics / PERMANOVA----
 #Note: use recipient_data for stats (don't factor in donor samples for global stats on trajectory yet)
 #Align Recipient_data.df with braycurtis_distance 
 braycurtis_matrix <- as.matrix(braycurtis_dist)
@@ -211,41 +309,56 @@ samples <- intersect(rownames(braycurtis_matrix), rownames(Recipient_data.df))
 Recipient_data.df <- Recipient_data.df[samples, ]
 braycurtis_subset <- as.dist(braycurtis_matrix[samples, samples])
 
+#Repeat for Aitchison - recipient_data.df with aitchison distance 
+aitchison_matrix<- as.matrix(aitchison_dist)
+samples <- intersect(rownames(aitchison_matrix), rownames(Recipient_data.df))
+
+Recipient_data.df <- Recipient_data.df[samples, ]
+aitchison_subset <- as.dist(aitchison_matrix[samples, samples])
+
 # Make sure that timepoint_ordered is a factor not a numeric ^should have been coded before but redo here
 Recipient_data.df$Timepoint_ordered <- factor(
   Recipient_data.df$Timepoint_ordered,
-  levels = c("S0","D0","D15","F7","F14","F21","Cull"),
+  levels = c("S0","D0","D15","F7","F14","F21","endpoint"),
   ordered = TRUE
 )
 
 ###Stats: (Question: is variation in gut microbiome explained by time?/Do microbiome compositions differ between timepoints?)
-adonis2(braycurtis_subset ~ Timepoint_ordered, 
+adonis2(aitchison_subset ~ Timepoint_ordered, 
         data = Recipient_data.df,
         permutations = 999,
         strata = Recipient_data.df$Mouse_ID) #permutations are constrained within each mouse/repeated measures
 
-###Stats: (Question: does autoFMT vs Donor-matchFMT vs Saline lead to different longitudinal changes?)
-adonis2(braycurtis_subset ~ Group * Timepoint_ordered,
+###Stats: (Question: does synFMT vs Donor-matchFMT vs Saline lead to different longitudinal changes?)
+adonis2(aitchison_subset ~ Group * Timepoint_ordered,
         data = Recipient_data.df,
         permutations = 999,
         strata = Recipient_data.df$Mouse_ID,
     by = "margin") #term level output
 
 #checking inter dispersion within the time and group (PERMANOVA detects group centroids i.e. biological or dispersion i.e. variances)
-betadisper(braycurtis_subset, Recipient_data.df$Timepoint_ordered) %>% anova()
-betadisper(braycurtis_subset, Recipient_data.df$Group) %>% anova()
+betadisper(aitchison_subset, Recipient_data.df$Timepoint_ordered) %>% anova()
+betadisper(aitchison_subset, Recipient_data.df$Group) %>% anova()
 
 #Plotting dispersion of Timepoint_ordered
 bd_timepoint_ordered <-betadisper(braycurtis_subset, Recipient_data.df$Timepoint_ordered)
+aitch_timepoint_ordered <-betadisper(aitchison_subset, Recipient_data.df$Timepoint_ordered)
 
 boxplot(bd_timepoint_ordered)
 plot(bd_timepoint_ordered)
 
+boxplot(aitch_timepoint_ordered)
+plot(aitch_timepoint_ordered)
+
 #plotting dispersion of Group
 bd_group <- betadisper(braycurtis_subset, Recipient_data.df$Group)
+aitch_group <- betadisper(aitchison_subset, Recipient_data.df$Group)
 
 boxplot(bd_group)
 plot(bd_group)
+
+boxplot(aitch_group)
+plot(aitch_group)
 
 #----Bray Curtis pairwise statistics for each timepoint----
 
@@ -276,7 +389,7 @@ for(tp in unique(Recipient_data.df$Timepoint_ordered)) {
   
   otu_sub <- otu_mat[subset_df$Sample_ID, , drop = FALSE]
   
-  dist_sub <- vegdist(otu_sub, method = "bray")
+  dist_sub <- vegdist(otu_sub, method = "bray") 
   
   pw <- pairwise.adonis2(
     dist_sub ~ Group,
@@ -292,6 +405,44 @@ library(tibble)
 pairwise_results <- bind_rows(results_list, .id = "Timepoint")
 #view object to see results
 
+#----Aitchison pairwise statistics for each timepoint----
+
+#stats: (Question: how do groups differ?)
+
+# Convert aitchison_subset (contains only recipient samples) into a matrix for usability
+aitchison_subset_mat<-as.matrix(aitchison_subset)
+#check names match - should return TRUE
+all(Recipient_data.df$Sample_ID %in% rownames(aitchison_subset_mat))
+all(rownames(Recipient_data.df)%in% rownames(aitchison_subset_mat))
+
+results_list_a <- list()
+
+for(tp in unique(Recipient_data.df$Timepoint_ordered)) {
+  
+  subset_df <- Recipient_data.df %>%
+    filter(Timepoint_ordered == tp)
+  
+  if(nrow(subset_df) < 2) next
+  if(length(unique(subset_df$Group)) < 2) next
+  
+  sample_ids <- subset_df$Sample_ID
+  
+  dist_sub <- as.dist(
+    aitchison_subset_mat[sample_ids, sample_ids]
+  )
+  
+  pw <- pairwise.adonis2(
+    dist_sub ~ Group,
+    data = subset_df,
+    permutations = 999
+  )
+  
+  results_list_a[[as.character(tp)]] <- pw
+}
+
+pairwise_results_a <- bind_rows(results_list, .id = "Timepoint")
+
+
 #----BC_timepoint_plot - all samples on one graph ----
 
 BC_timepoint_plot <- ggplot(PC_data.df, aes(x = BC1, y = BC2, 
@@ -299,20 +450,25 @@ BC_timepoint_plot <- ggplot(PC_data.df, aes(x = BC1, y = BC2,
                                   size = Group)) + 
   geom_point(alpha = 0.8) +
   scale_size_manual(values = c(
-    "AutoFMT"             = 1,
+    "Syn FMT"             = 1,
     "Donor match FMT"     = 1,
     "Saline"              = 1,
-    "C57/BL6 microbiome"  = 7,
+    "C57BL/6 microbiome"  = 7,
     "LPJ microbiome"      = 7
   ), guide = "none") +  # hide size legend if not needed
   geom_point(
     data = PC_data.df %>% 
-      filter(Group %in% c("AutoFMT", "Donor match FMT", "Saline")),
+      filter(Group %in% c("Syn FMT","Donor match FMT","Saline")),
     aes(shape = Group),
     size = 2,          # size has to be +1 from previous to overlay the shape
     stroke = 1
   )+
-  scale_color_viridis_d(option = "plasma") +  # discrete palette for ordered factors such as (Timepoint_ordered)
+  scale_shape_manual(values = c(
+    "Donor match FMT" = 16,            # circle
+    "Saline" = 17,                     # triangle
+    "Syn FMT" = 15                     # square
+  )) +
+  scale_color_viridis_d(option = "plasma", direction = -1) +  # discrete palette for ordered factors such as (Timepoint_ordered)
   theme_minimal(base_size = 14) +
   labs(
     title = "Bray–Curtis PCoA (coloured by Timepoint)",
@@ -329,20 +485,27 @@ BC_GvHDscore_plot <- ggplot(PC_data.df, aes(x = BC1, y = BC2,
                                             size = Group)) +
   geom_point(alpha = 0.8) +
   scale_size_manual(values = c(
-    "AutoFMT"             = 1,
+    "Syn FMT"             = 1,
     "Donor match FMT"     = 1,
     "Saline"              = 1,
-    "C57/BL6 microbiome"  = 7,
+    "C57BL/6 microbiome"  = 7,
     "LPJ microbiome"      = 7
   ), guide = "none") +  # hide size legend if not needed
   geom_point(
 #    data = PC_data.df %>% 
-#      filter(Group %in% c("AutoFMT", "Donor match FMT", "Saline")),
+#      filter(Group %in% c("Syn FMT", "Donor match FMT", "Saline")),
     aes(shape = Group),
     size = 2,          # size has to be +1 from previous to overlay the shape
     stroke = 1
   )+
-  scale_color_viridis_c(option = "plasma",
+  scale_shape_manual(values = c(
+    "Donor match FMT" = 16,            # circle
+    "Saline" = 17,                     # triangle
+    "Syn FMT" = 15,                     # square
+    "LPJ microbiome" = 1,
+    "C57BL/6 microbiome" = 0
+  )) +
+  scale_color_viridis_c(option = "plasma", direction = -1,
                         breaks = c(0, 1, 2, 3, 4, 5, 6, 7)) +
   theme_minimal(base_size = 14) +
   labs(
@@ -361,15 +524,15 @@ BC_study_plot <- ggplot(PC_data.df, aes(x = BC1, y = BC2,
                                             size = Group)) + 
   geom_point(alpha = 0.8) +
   scale_size_manual(values = c(
-    "AutoFMT"             = 1,
+    "Syn FMT"             = 1,
     "Donor match FMT"     = 1,
     "Saline"              = 1,
-    "C57/BL6 microbiome"  = 7,
+    "C57BL/6 microbiome"  = 7,
     "LPJ microbiome"      = 7
   ), guide = "none") +  # hide size legend if not needed
   geom_point(
     data = PC_data.df %>% 
-      filter(Group %in% c("AutoFMT", "Donor match FMT", "Saline")),
+      filter(Group %in% c("Syn FMT", "Donor match FMT", "Saline")),
     aes(shape = Group),
     size = 2,          # size has to be +1 from previous to overlay the shape
     stroke = 1
@@ -390,7 +553,7 @@ BC_study_plot
 donor_samples <- c("25-03302", "25-03303")
 # Keep only real timepoints (for plotting individual graphs) in order
 timepoints <- setdiff(levels(PC_data.df$Timepoint_ordered),
-                      c("LPJ microbiome", "C57/BL6 microbiome"))
+                      c("LPJ microbiome", "C57BL/6 microbiome"))
 
 BC_PLOTS <- list()
 
@@ -412,10 +575,10 @@ for(tp in timepoints){
                size = 5, shape = 21, stroke = 1.5, fill = NA) +
     scale_color_manual(values = group_cols) +
     scale_size_manual(values = c(
-      "AutoFMT"            = 2,
+      "Syn FMT"            = 2,
       "Donor match FMT"    = 2,
       "Saline"             = 2,
-      "C57/BL6 microbiome" = 6,
+      "C57BL/6 microbiome" = 6,
       "LPJ microbiome"     = 6
     ), guide = "none") +
     theme_minimal(base_size = 14) +
@@ -423,70 +586,240 @@ for(tp in timepoints){
          x = "PCoA Axis 1",
          y = "PCoA Axis 2")
 }
-BC_PLOTS
+
 
 library(cowplot)
 BC_time_plots <- plot_grid(plotlist = BC_PLOTS[timepoints],
-                           ncol = 2, labels = "AUTO")
+                           ncol = 2,
+                           labels = c("i", "ii", "iii", "iv", "v", "vi", "Vii","viii"))
 BC_time_plots
+
+#----Aitchison MDS plots----
+
+MDS_timepoint_plot <- ggplot(PC_data.df, aes(x = MDS1, y = MDS2, 
+                                             colour = Timepoint_ordered,
+                                             size = Group)) + 
+  geom_point(alpha = 0.8) +
+  scale_size_manual(values = c(
+    "Syn FMT"             = 1,
+    "Donor match FMT"     = 1,
+    "Saline"              = 1,
+    "C57BL/6 microbiome"  = 7,
+    "LPJ microbiome"      = 7
+  ), guide = "none") +  # hide size legend if not needed
+  geom_point(
+    data = PC_data.df %>% 
+      filter(Group %in% c("Syn FMT","Donor match FMT","Saline")),
+    aes(shape = Group),
+    size = 2,          # size has to be +1 from previous to overlay the shape
+    stroke = 1
+  )+
+  scale_shape_manual(values = c(
+    "Donor match FMT" = 16,            # circle
+    "Saline" = 17,                     # triangle
+    "Syn FMT" = 15                     # square
+  )) +
+  scale_color_viridis_d(option = "plasma", direction = -1) +  # discrete palette for ordered factors such as (Timepoint_ordered)
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Aitchisons MDS (coloured by Timepoint)",
+    x = xlab_mds1,
+    y = ylab_mds2,
+    colour = "Timepoint"
+  )
+
+MDS_timepoint_plot
+
+#GvHD score mapping to MDS
+
+MDS_GvHDscore_plot <- ggplot(PC_data.df, aes(x = MDS1, y = MDS2, 
+                                            colour = GvHD_score, #Timepoint_ordered
+                                            size = Group)) +
+  geom_point(alpha = 0.8) +
+  scale_size_manual(values = c(
+    "Syn FMT"             = 1,
+    "Donor match FMT"     = 1,
+    "Saline"              = 1,
+    "C57BL/6 microbiome"  = 7,
+    "LPJ microbiome"      = 7
+  ), guide = "none") +  # hide size legend if not needed
+  geom_point(
+    #    data = PC_data.df %>% 
+    #      filter(Group %in% c("Syn FMT", "Donor match FMT", "Saline")),
+    aes(shape = Group),
+    size = 2,          # size has to be +1 from previous to overlay the shape
+    stroke = 1
+  )+
+  scale_shape_manual(values = c(
+    "Donor match FMT" = 16,            # circle
+    "Saline" = 17,                     # triangle
+    "Syn FMT" = 15,                     # square
+    "LPJ microbiome" = 1,
+    "C57BL/6 microbiome" = 0
+  )) +
+  scale_color_viridis_c(option = "plasma", direction = -1,
+                        breaks = c(0, 1, 2, 3, 4, 5, 6, 7)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Aitchisions MDS by GvHD-score",
+    x = xlab_mds1,
+    y = ylab_mds2
+  )
+
+MDS_GvHDscore_plot
+
+#MDS plots for each timepoint
+
+MDS_PLOTS <- list()
+
+for(tp in timepoints){
+  df_tp <- PC_data.df %>% filter(Timepoint_ordered == tp)
+  
+  MDS_PLOTS[[tp]] <- ggplot(df_tp, aes(x = MDS1, y = MDS2, colour = Group, size = Group)) +
+    geom_point(aes(shape = Death_timepoint), alpha = 0.8, stroke = 0.5) +
+    scale_shape_manual(values = c(
+      "endpoint" = 16,            # circle
+      "non-endpoint" = 17,        # triangle
+      "died preF7" = 15           # square
+    )) +
+    # ellipses for each group at that timepoint
+    stat_ellipse(level = 0.95, size = 0.5) +
+    # overlay donor samples: keep group color, but larger + black outline
+    geom_point(data = PC_data.df %>% filter(Sample_ID %in% donor_samples),
+               aes(x = MDS1, y = MDS2, colour = Group), 
+               size = 5, shape = 21, stroke = 1.5, fill = NA) +
+    scale_color_manual(values = group_cols) +
+    scale_size_manual(values = c(
+      "Syn FMT"            = 2,
+      "Donor match FMT"    = 2,
+      "Saline"             = 2,
+      "C57BL/6 microbiome" = 6,
+      "LPJ microbiome"     = 6
+    ), guide = "none") +
+    theme_bw(base_size = 14) +
+    theme(legend.position="none")+
+    labs(title = paste(tp),
+         x = xlab_mds1,
+         y = ylab_mds2)
+}
+
+legend_plot <- MDS_PLOTS[[1]] +
+  theme(
+    legend.position = "bottom",
+  )
+legend_plot
+legend <- get_legend(legend_plot)
+
+library(cowplot)
+MDS_time_grid <- plot_grid(plotlist = MDS_PLOTS[timepoints],
+                           ncol = 4,
+                           labels = c("i", "ii", "iii", "iv", "v", "vi", "Vii","viii"))
+MDS_time_plots <- plot_grid(
+  MDS_time_grid,
+  legend,
+  ncol = 1,
+  rel_heights = c(1, 0.08)
+)
+MDS_time_plots
 
 #----Graphing distance to donor microbiome----
 #need to assign which sample is which and then generate calculations from those distances and slot into a new column in Recipient.data.df
-#plot distance to AutoFMT, DonorFMT and distance to baseline
+#plot distance to Syn FMT, Donor match FMT and distance to baseline
 
-#create a distance matrix with all samples (includes donors)
-bc_full <- as.matrix(braycurtis_dist) 
-#technically I have this as braycurtis_matrix already...can clean up this step. 
+#create distance matrix with all samples (includes donors)
+braycurtis_matrix <- as.matrix(braycurtis_dist) #already completed in above script but run again
+aitchison_matrix<- as.matrix(aitchison_dist) #already completed in above script but run again
 
 #define samples to extract distances from
 donor_match_id <- "25-03303"
-auto_fmt_id    <- "25-03302"
+syn_fmt_id    <- "25-03302"
 
 #add calculations of distance to recipient_data.df 
 #distance to LPJ donor
-Recipient_data.df$dist_to_donor <- bc_full[
+Recipient_data.df$dist_to_donor <- braycurtis_matrix[
   Recipient_data.df$Sample_ID, donor_match_id
 ]
+
+Recipient_data.df$dist_to_donor_a <- aitchison_matrix[
+  Recipient_data.df$Sample_ID, donor_match_id
+]
+
 #distance to C57 donor
-Recipient_data.df$dist_to_auto <- bc_full[
-  Recipient_data.df$Sample_ID, auto_fmt_id
+Recipient_data.df$dist_to_syn <- braycurtis_matrix[
+  Recipient_data.df$Sample_ID, syn_fmt_id
+]
+
+Recipient_data.df$dist_to_syn_a <- aitchison_matrix[
+  Recipient_data.df$Sample_ID, syn_fmt_id
 ]
 
 ##plot: distance to LPJ donor
 
-distance_to_LPJ <- ggplot(Recipient_data.df, aes(Timepoint_ordered, dist_to_donor,
+distance_to_LPJ <- ggplot(Recipient_data.df, aes(Timepoint_ordered, dist_to_donor_a, #swap between dist_to_donor_a***
                               color = Group, group = Mouse_ID)) +
-  geom_point(alpha = 0.6) +
   geom_line(alpha = 0.4) +
   stat_summary(aes(group = Group), fun = mean, geom = "line", linewidth = 1.5) +
-  theme_minimal() +
-  labs (title = "Distance to Donor-match FMT over time",
-        y = "Bray-Curtis distance")
+  scale_color_manual(values = group_cols) +
+  theme_minimal(base_size =16) +
+  theme(
+    plot.title = element_text(size = 16,
+                              face = "bold",
+                              hjust = 0.5),
+    axis.line = element_line(linewidth = 0.5)
+  ) +
+  labs (title = "Distance to donor match (LPJ) FMT over time",
+        y = "Aitchison distance",
+        x = "")
 distance_to_LPJ
 
 ##plot: distance to C57 donor
 
-distance_to_C57 <- ggplot(Recipient_data.df, aes(Timepoint_ordered, dist_to_auto,
+distance_to_C57 <- ggplot(Recipient_data.df, aes(Timepoint_ordered, dist_to_syn_a,
                                                  color = Group, group = Mouse_ID)) +
-  geom_point(alpha = 0.6) +
   geom_line(alpha = 0.4) +
   stat_summary(aes(group = Group), fun = mean, geom = "line", linewidth = 1.5) +
-  theme_minimal() +
-  labs (title = "Distance to Auto FMT over time",
-        y = "Bray-Curtis distance")
+  scale_color_manual(values = group_cols) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 16,
+                              face = "bold",
+                              hjust = 0.5),
+    axis.line = element_line(linewidth = 0.5)
+  ) +
+  labs (title = "Distance to Syn (C57BL/6) FMT over time",
+        y = "Aitchison distance",
+        x = "")
 distance_to_C57
 
-#stats
-library(lme4)
+###stats
 
-distance_to_LPJ_model <-lmer(dist_to_donor ~ Group * Timepoint + Study_ID + (1 | Mouse_ID),
+#Create mixed model of distance to LPJ 
+library(lme4)
+distance_to_LPJ_model <-lmer(dist_to_donor_a ~ Group * Timepoint + Study_ID + (1 | Mouse_ID),
                              data = Recipient_data.df)
 summary(distance_to_LPJ_model)
 
+#Overall effects of group x timepoint based on model
+anova(distance_to_LPJ_model)
 
-distance_to_C57_model <-lmer(dist_to_auto ~ Group * Timepoint + Study_ID + (1 | Mouse_ID),
+#Estimate group differences at each timepoint based on model
+library(emmeans)
+emmeans(distance_to_LPJ_model, 
+        pairwise ~ Group | Timepoint,
+        adjust = "BH")
+
+#Create mixed model of distance to C57
+distance_to_C57_model <-lmer(dist_to_syn_a ~ Group * Timepoint + Study_ID + (1 | Mouse_ID),
                              data = Recipient_data.df)
 summary(distance_to_C57_model)
+
+#Overall effects of group x timepoint based on model
+anova(distance_to_C57_model)
+
+#Estimate group differences at each timepoint based on model
+emmeans(distance_to_C57_model, 
+        pairwise ~ Group | Timepoint,
+        adjust = "BH")
 
 #----Graphing distance to baseline microbiome----
 
@@ -506,19 +839,26 @@ Recipient_data.df$dist_to_baseline <- sapply(Recipient_data.df$Sample_ID, functi
   
   if (length(baseline_sample) !=1) return(NA)
   
-  braycurtis_matrix[sid, baseline_sample]
+  aitchison_matrix[sid, baseline_sample] ##switch out between matrix of bray or aitchison here***
 })
 
 #plot: distance to baseline
 
 distance_to_baseline_plot <-ggplot(Recipient_data.df, aes(Timepoint_ordered, dist_to_baseline, 
                                                             color = Group, group = Mouse_ID)) +
-  geom_point(alpha = 0.6) +
   geom_line(alpha = 0.4) +
   stat_summary(aes(group = Group), fun = mean, geom = "line", linewidth = 1.5) +
-  theme_minimal()+
+  scale_color_manual(values = group_cols) +
+  theme_minimal(base_size = 16)+
+  theme(
+    plot.title = element_text(size = 16,
+                              face = "bold",
+                              hjust = 0.5),
+    axis.line = element_line(linewidth = 0.5)
+  ) +
   labs (title = "Distance to baseline over time",
-        y = "Bray-Curtis distance")
+        y = "Aitchison distance",
+        x = "")
 
 distance_to_baseline_plot
 
@@ -526,8 +866,14 @@ distance_to_baseline_plot
 distance_to_baseline_model <- lmer(dist_to_baseline ~ Group * Timepoint + Study_ID + (1 | Mouse_ID), 
                                    data = Recipient_data.df)
 
-summary(distance_to_baseline_model)
+#summary(distance_to_baseline_model)
+anova(distance_to_baseline_model)
 
+emmeans(
+  distance_to_baseline_model,
+  pairwise ~ Group | Timepoint,
+  adjust = "BH"
+)
 
 #====save graphs for export====
 #Create consistent filepath and parameters for saving graphs
@@ -542,13 +888,20 @@ save_plot <- function(plot_obj, filename, width = 8, height = 6) {
 }
 
 #save plots in order of production
-save_plot(Shannon_timeline_plot, "Shannon_timeline_plot_all-mice.pdf")
-save_plot(raincloud_shannon_plot, "Raincloud_shannon_plot.pdf")
-save_plot(Shannon_all_plot, "Shannon_all_plot.pdf", width = 10, height = 14)
+save_plot(Shannon_timeline_plot, "Shannon_timeline_plot_all-mice.pdf", width = 8, height =5)
+save_plot(raincloud_shannon_plot, "Raincloud_shannon_plot.pdf", width = 8, height = 5)
+save_plot(Shannon_all_plot, "Shannon_all_plot.pdf", width = 15, height = 8)
+save_plot(shannon_D15_plot, "shannon_D15_plot.pdf")
+
 save_plot(BC_timepoint_plot, "BC_timepoint_plot.pdf")
 save_plot(BC_GvHDscore_plot, "BC_GvHDscore_plot.pdf")
 save_plot(BC_time_plots,"BrayCurtis_PCoA_allTimepoints.pdf", width = 12, height = 15)
-save_plot(distance_to_LPJ, "BrayCurtis_distance_to_LPJ.pdf")
-save_plot(distance_to_C57, "BrayCurtis_distance_to_C57.pdf")
-save_plot(distance_to_baseline_plot, "BrayCurtis_distance_to_baseline.pdf")
+
+save_plot(MDS_timepoint_plot, "MDS_timepoint_plot.pdf", width = 7, height = 6)
+save_plot(MDS_GvHDscore_plot, "MDS_GvHDscore_plot.pdf", width = 7, height = 6)
+save_plot(MDS_time_plots, "Aitchisons_MDS_allTimepoints.pdf", width = 14, height = 8)
+
+save_plot(distance_to_LPJ, "Aitchison_distance_to_LPJ.pdf", width = 8, height= 4)
+save_plot(distance_to_C57, "Aitchison_distance_to_C57.pdf", width = 8, height= 4)
+save_plot(distance_to_baseline_plot, "Aitchison_distance_to_baseline.pdf", width = 8, height= 4)
 

@@ -157,7 +157,7 @@ physeq_prop <- transform_sample_counts(physeq_raw, function(x) x / sum(x))
 
 # Optional: check the object has converted into relative abundance
 sample_sums(physeq_raw)[1:5]
-sample_sums(physeq_prop)[1:5]
+sample_sums(physeq_prop)[1:5] #should all =1
 
 # Add tree to raw counts object
 physeq_raw_tree <- merge_phyloseq(physeq_raw, phy_tree(tree))
@@ -166,9 +166,9 @@ physeq_raw_tree <- merge_phyloseq(physeq_raw, phy_tree(tree))
 # physeq_prop_tree <- merge_phyloseq(physeq_prop, phy_tree(tree))
 
 #====Save RDS files: phyloseq objects====
-saveRDS(physeq_raw, file=file.path(project_dir, "Phyloseq_objects", "physeq_raw.rds"))
-saveRDS(physeq_prop, file=file.path(project_dir, "Phyloseq_objects", "physeq_prop.rds"))
-saveRDS(map_data, file=file.path(project_dir, "Phyloseq_objects", "map_data.rds"))
-saveRDS(physeq_raw_tree, file=file.path(project_dir, "Phyloseq_objects", "physeq_raw_tree.rds"))
+#saveRDS(physeq_raw, file=file.path(project_dir, "Phyloseq_objects", "physeq_raw.rds"))
+#saveRDS(physeq_prop, file=file.path(project_dir, "Phyloseq_objects", "physeq_prop.rds"))
+#saveRDS(map_data, file=file.path(project_dir, "Phyloseq_objects", "map_data.rds"))
+#saveRDS(physeq_raw_tree, file=file.path(project_dir, "Phyloseq_objects", "physeq_raw_tree.rds"))
 
 

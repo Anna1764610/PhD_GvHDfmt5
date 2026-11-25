@@ -1,10 +1,9 @@
 # GvHDstudy
 
 Analysis scripts for 16S microbiome data of GvHDfmt5 study.
-GvHDfmt5 study is part of the overall GVHDfmt project and consists of 3 transplant runs of different cohorts of mice: GvHDfmt5a, GvHDfmt5b and GvHDfmt5c
 
 ## Structure
-- Scripts/: R analysis scripts
+- Scripts/: R analysis scripts, includes GvHDfmt5_data-processing.R, GvHDfmt5_stats-plots.R, GvHDfmt5_taxonomy.R, GvHDfmt5_correlations
 - Metadata/: GvHDfmt5_Metadata_R is metadata linked to the sequenced sample ID, GvHDfmt5_study_parameter is study metadata linked to the mouse ID
 - QIIME2 outputs and derived objects are generated locally and not tracked
 
